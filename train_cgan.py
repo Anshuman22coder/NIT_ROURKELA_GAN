@@ -5,7 +5,7 @@ from models.gan_model import ConditionalGAN
 from dataset import BackgroundDataset  # Custom dataset for GAN training
 
 # Load dataset
-dataset = BackgroundDataset("data/backgrounds")  # Ensure dataset folder exists
+dataset = BackgroundDataset("data/backgrounds")  
 dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 
 # Initialize model, loss function, and optimizer
