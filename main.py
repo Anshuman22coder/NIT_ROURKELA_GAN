@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 from models.modnet import MODNet
 from models.gan_model import ConditionalGAN
-from models.stylegan import StyleGAN  # Assuming you have the StyleGAN model
+from models.srgan_model import SRGAN  # Assuming SRGAN is in models/srgan_model.py
 from torch.utils.data import DataLoader
 from torchvision import models, transforms
 from skimage.metrics import structural_similarity as ssim
@@ -25,13 +25,13 @@ def load_conditional_gan(device):
     gan.eval()
     return gan
 
-# Load StyleGAN
-def load_stylegan(device):
-    sgan = StyleGAN()
-    sgan.load_state_dict(torch.load("checkpoints/stylegan.pth", map_location=device))
-    sgan.to(device)
-    sgan.eval()
-    return sgan
+# Load SRGAN
+def load_srgan(device):
+    srgan = SRGAN()
+    srgan.load_state_dict(torch.load("checkpoints/srgan.pth", map_location=device))
+    srgan.to(device)
+    srgan.eval()
+    return srgan
 
 # Generate an image using Conditional GAN
 def generate_gan_image(gan, condition, device):
@@ -39,11 +39,13 @@ def generate_gan_image(gan, condition, device):
         generated_image = gan(condition)
         return generated_image
 
-# Generate an image using StyleGAN
-def generate_sgan_image(sgan, latent_vector, device):
+# Generate an image using SRGAN
+def generate_srgan_image(srgan, image, device):
+    image = torch.tensor(image).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+    image = image.to(device)
     with torch.no_grad():
-        generated_image = sgan(latent_vector)
-        return generated_image
+        super_res_image = srgan(image)
+    return super_res_image
 
 # Inception Score Calculation
 def calculate_inception_score(images, device, batch_size=32, splits=10):
@@ -88,7 +90,7 @@ def calculate_ssim(img1, img2):
     # Compute SSIM
     return ssim(img1_gray, img2_gray)
 
-# Process image and combine with GAN
+# Process image and combine with GAN and SRGAN
 def process_image(image_path):
     image = cv2.imread(image_path)
     if image is None:
@@ -101,7 +103,7 @@ def process_image(image_path):
     # Load models
     modnet = load_modnet(device)
     gan = load_conditional_gan(device)
-    sgan = load_stylegan(device)
+    srgan = load_srgan(device)
     
     # Foreground extraction with MODNet
     with torch.no_grad():
@@ -115,41 +117,37 @@ def process_image(image_path):
     condition = torch.randn(1, 100, device=device)  # Example condition (e.g., a random latent vector)
     gan_image = generate_gan_image(gan, condition, device)
 
-    # Generate image using StyleGAN (use latent vector)
-    latent_vector = torch.randn(1, 512, device=device)  # Example latent vector for StyleGAN
-    sgan_image = generate_sgan_image(sgan, latent_vector, device)
-
-    # Post-process the generated images
+    # Post-process the generated image (CGAN)
     gan_image = gan_image.squeeze().cpu().numpy()
     gan_image = np.clip(gan_image, 0, 1) * 255  # Scale to [0, 255] range
     gan_image = gan_image.astype(np.uint8)
 
-    sgan_image = sgan_image.squeeze().cpu().numpy()
-    sgan_image = np.clip(sgan_image, 0, 1) * 255
-    sgan_image = sgan_image.astype(np.uint8)
+    # Generate high-resolution image using SRGAN
+    srgan_image = generate_srgan_image(srgan, image, device)
+    
+    # Post-process the SRGAN generated image
+    srgan_image = srgan_image.squeeze().cpu().numpy()
+    srgan_image = np.clip(srgan_image, 0, 1) * 255  # Scale to [0, 255] range
+    srgan_image = srgan_image.astype(np.uint8)
 
     # Combine foreground and GAN image (here we are just overlaying them for simplicity)
-    combined_image_gan = foreground * 0.5 + gan_image * 0.5  # Blending
-    combined_image_sgan = foreground * 0.5 + sgan_image * 0.5  # Blending
-    
-    combined_image_gan = np.clip(combined_image_gan, 0, 255).astype(np.uint8)
-    combined_image_sgan = np.clip(combined_image_sgan, 0, 255).astype(np.uint8)
+    combined_image = foreground * 0.5 + gan_image * 0.5  # Blending
+    combined_image = np.clip(combined_image, 0, 255).astype(np.uint8)
 
-    # Save the results
-    cv2.imwrite("output_gan.jpg", combined_image_gan)
-    cv2.imwrite("output_sgan.jpg", combined_image_sgan)
+    # Save the result
+    cv2.imwrite("output_combined.jpg", combined_image)
+    cv2.imwrite("output_gan.jpg", gan_image)
+    cv2.imwrite("output_srgan.jpg", srgan_image)
 
     # Inception Score (Assuming you have multiple generated images in a list)
-    images = [combined_image_gan, combined_image_sgan]  # Replace with actual list of generated images
+    images = [combined_image]  # Replace with actual list of generated images
     inception_score = calculate_inception_score(images, device)
     print(f"Inception Score: {inception_score}")
 
     # SSIM (Compare with original image or another reference image)
     original_image = cv2.imread(image_path)  # Original image
-    ssim_value_gan = calculate_ssim(original_image, combined_image_gan)
-    ssim_value_sgan = calculate_ssim(original_image, combined_image_sgan)
-    print(f"SSIM (GAN): {ssim_value_gan}")
-    print(f"SSIM (SGAN): {ssim_value_sgan}")
+    ssim_value = calculate_ssim(original_image, combined_image)
+    print(f"SSIM: {ssim_value}")
 
 # Run the process
 process_image("data/test/sample.jpg")
